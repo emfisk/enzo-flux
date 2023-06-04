@@ -29,10 +29,9 @@ int CosmologyComputeExpansionFactor(FLOAT time, FLOAT *a, FLOAT *dadt);
 int GetUnits(float *DensityUnits, float *LengthUnits,
 	     float *TemperatureUnits, float *TimeUnits,
 	     float *VelocityUnits, FLOAT Time);
-
 int Star::CalculateMassAccretion(float &BondiRadius, float &density)
 {
-
+    float dt = CurrentGrid->dtFixed;
   if ((this->type != BlackHole && this->type != MBH) || 
       (this->CurrentGrid == NULL)) 
     return SUCCESS;
@@ -108,8 +107,7 @@ int Star::CalculateMassAccretion(float &BondiRadius, float &density)
 	CurrentGrid->BaryonField[HINum][index] + 
 	CurrentGrid->BaryonField[HIINum][index] +
 	CurrentGrid->BaryonField[DeNum][index] +
-	0.25 * (CurrentGrid->BaryonField[HeINum][index] +
-		CurrentGrid->BaryonField[HeIINum][index] +
+	0.25 * (CurrentGrid->BaryonField[HeINum][index] +		CurrentGrid->BaryonField[HeIINum][index] +
 		CurrentGrid->BaryonField[HeIIINum][index]);
       if (MultiSpecies > 1)
 	number_density += 
@@ -498,8 +496,135 @@ int Star::CalculateMassAccretion(float &BondiRadius, float &density)
       // mdot = -rho * A * div(v) in SolarMass/sec (if no converging flow, no accretion)
       mdot = max(0.0, -density * DensityUnits * POW(CurrentGrid->CellWidth[0][0]*LengthUnits, 2.0) *
 		 divergence * VelocityUnits / SolarMass);	
-    }		   
+    }
+      if (MBHAccretion == 20){
+             //fprintf(stdout,"Timestep: %g years",dt);
+             //fprintf(stdout,"about to find grids to use for accretion\n");
+             // Accretion based on computing orthogonal projection of gas velocity vector in surrounding cells onto distance vector to black hole,
+             //then multiplying by cell area and cella density
+              int i = 0;
+              int middle = ((igrid[2] + CurrentGrid->GridStartIndex[2]) * CurrentGrid->GridDimension[1] + igrid[1] + CurrentGrid->GridStartIndex[1]) * CurrentGrid->GridDimension[0] +igrid[0] + CurrentGrid->GridStartIndex[0];
+              int  up = ((igrid[2]+1 + CurrentGrid->GridStartIndex[2]) * CurrentGrid->GridDimension[1] + igrid[1] + CurrentGrid->GridStartIndex[1]) * CurrentGrid->GridDimension[0] +igrid[0] + CurrentGrid->GridStartIndex[0];
+              int down = ((igrid[2]-1 + CurrentGrid->GridStartIndex[2]) * CurrentGrid->GridDimension[1] +igrid[1] + CurrentGrid->GridStartIndex[1]) * CurrentGrid->GridDimension[0] + igrid[0] + CurrentGrid->GridStartIndex[0];
+              int east =  ((igrid[2] + CurrentGrid->GridStartIndex[2]) * CurrentGrid->GridDimension[1] + igrid[1]+1  + CurrentGrid->GridStartIndex[1]) * CurrentGrid->GridDimension[0] +igrid[0] + CurrentGrid->GridStartIndex[0];
+              int west = ((igrid[2] + CurrentGrid->GridStartIndex[2]) * CurrentGrid->GridDimension[1] +igrid[1]-1 + CurrentGrid->GridStartIndex[1]) * CurrentGrid->GridDimension[0] +igrid[0] + CurrentGrid->GridStartIndex[0];
+              int north = ((igrid[2] + CurrentGrid->GridStartIndex[2]) * CurrentGrid->GridDimension[1] + igrid[1] + CurrentGrid->GridStartIndex[1]) * CurrentGrid->GridDimension[0] + igrid[0]+1 + CurrentGrid->GridStartIndex[0];
+              int south = ((igrid[2] + CurrentGrid->GridStartIndex[2]) * CurrentGrid->GridDimension[1] + igrid[1] + CurrentGrid->GridStartIndex[1]) * CurrentGrid->GridDimension[0] +igrid[0]-1 + CurrentGrid->GridStartIndex[0];
+             fprintf(stdout,"* \n");
+             double DensityConversion = FLOAT(double(DensityUnits) / SolarMass * POW(Mpc_cm, 3)); // to SolarMass/Mpc^3
+             double VelocityConversion = FLOAT(double(VelocityUnits) / Mpc_cm); // to mpc/s
+              int relevantcells[] = {up,down,east,west,north,south};
+              double relevantvelocities[6][3];
+              double relevantbhvectors[6][3];
+              double relevantgasdensities[6];
+              for (i=0;i<6;i++){
+                relevantvelocities[i][0] = CurrentGrid->BaryonField[Vel3Num][relevantcells[i]] * VelocityConversion; //in mpc/s
+                relevantvelocities[i][1] = CurrentGrid->BaryonField[Vel2Num][relevantcells[i]] * VelocityConversion;
+                relevantvelocities[i][2] = CurrentGrid->BaryonField[Vel1Num][relevantcells[i]] * VelocityConversion;
+              }
+                fprintf(stdout,"* * \n");
+             //fprintf(stdout,"found the velocities\n");
+              double  a, dadt, BoxSize;
+              double CellVolume = 1;
+              for (dim = 0; dim < MAX_DIMENSION; dim++)
+                   CellVolume *= CurrentGrid->CellWidth[0][0]*BoxSize; // in Mpc^3
+              if (ComovingCoordinates) {
+                   CosmologyComputeExpansionFactor(time, &a, &dadt);
+                   BoxSize = ComovingBoxSize/HubbleConstantNow*a/(1+InitialRedshift);
+                 } else
+                   BoxSize = LengthUnits/Mpc_cm; // to Mpc
 
+              for(int i=0; i<6; i++){
+                relevantgasdensities[i] = CurrentGrid->BaryonField[DensNum][relevantcells[i]] * DensityConversion; // in solar mass
+              }
+                fprintf(stdout,"* * * \n");
+              relevantbhvectors[0][2] = (CurrentGrid->CellLeftEdge[2][igrid[2] + 1 + CurrentGrid->GridStartIndex[2]] + 0.5*CurrentGrid->CellWidth[2][0]) -
+ (CurrentGrid->CellLeftEdge[2][igrid[2] + CurrentGrid->GridStartIndex[2]] + 0.5*CurrentGrid->CellWidth[2][0]) * BoxSize;
+              relevantbhvectors[0][1] = (CurrentGrid->CellLeftEdge[1][igrid[1]  + CurrentGrid->GridStartIndex[1]] + 0.5*CurrentGrid->CellWidth[1][0])
+ -(CurrentGrid->CellLeftEdge[1][igrid[1]  + CurrentGrid->GridStartIndex[1]] + 0.5*CurrentGrid->CellWidth[1][0] ) * BoxSize;
+              relevantbhvectors[0][0]= (CurrentGrid->CellLeftEdge[0][igrid[0]  + CurrentGrid->GridStartIndex[0]] + 0.5*CurrentGrid->CellWidth[0][0]) -
+ (CurrentGrid->CellLeftEdge[0][igrid[0]  + CurrentGrid->GridStartIndex[0]] + 0.5*CurrentGrid->CellWidth[0][0] )* BoxSize;
+              relevantbhvectors[1][2] = (CurrentGrid->CellLeftEdge[2][igrid[2] -1 + CurrentGrid->GridStartIndex[2]] + 0.5*CurrentGrid->CellWidth[2][0]) -
+ (CurrentGrid->CellLeftEdge[2][igrid[2] + CurrentGrid->GridStartIndex[2]] + 0.5*CurrentGrid->CellWidth[2][0] ) * BoxSize;
+              relevantbhvectors[1][1] = (CurrentGrid->CellLeftEdge[1][igrid[1]  + CurrentGrid->GridStartIndex[1]] + 0.5*CurrentGrid->CellWidth[1][0] ) -
+ (CurrentGrid->CellLeftEdge[1][igrid[1]  + CurrentGrid->GridStartIndex[1]] + 0.5*CurrentGrid->CellWidth[1][0]) * BoxSize;
+              relevantbhvectors[1][0]= (CurrentGrid->CellLeftEdge[0][igrid[0]  + CurrentGrid->GridStartIndex[0]] + 0.5*CurrentGrid->CellWidth[0][0]) -
+ (CurrentGrid->CellLeftEdge[0][igrid[0]  + CurrentGrid->GridStartIndex[0]] + 0.5*CurrentGrid->CellWidth[0][0]) * BoxSize;
+              relevantbhvectors[2][2] = (CurrentGrid->CellLeftEdge[2][igrid[2]  + CurrentGrid->GridStartIndex[2]] + 0.5*CurrentGrid->CellWidth[2][0]) -
+ (CurrentGrid->CellLeftEdge[2][igrid[2]  + CurrentGrid->GridStartIndex[2]] + 0.5*CurrentGrid->CellWidth[2][0])  * BoxSize;
+              relevantbhvectors[2][1] = (CurrentGrid->CellLeftEdge[1][igrid[1] +1 + CurrentGrid->GridStartIndex[1]] + 0.5*CurrentGrid->CellWidth[1][0] - pos[1]) -
+ (CurrentGrid->CellLeftEdge[1][igrid[1]  + CurrentGrid->GridStartIndex[1]] + 0.5*CurrentGrid->CellWidth[1][0] - pos[1]) * BoxSize;
+              relevantbhvectors[2][0]= (CurrentGrid->CellLeftEdge[0][igrid[0]  + CurrentGrid->GridStartIndex[0]] + 0.5*CurrentGrid->CellWidth[0][0]) - (CurrentGrid->CellLeftEdge[0][igrid[0]  + CurrentGrid->GridStartIndex[0]] + 0.5*CurrentGrid->CellWidth[0][0])* BoxSize;
+              relevantbhvectors[3][2] = (CurrentGrid->CellLeftEdge[2][igrid[2]  + CurrentGrid->GridStartIndex[2]] + 0.5*CurrentGrid->CellWidth[2][0]) -(CurrentGrid->CellLeftEdge[2][igrid[2]  + CurrentGrid->GridStartIndex[2]] + 0.5*CurrentGrid->CellWidth[2][0]) * BoxSize;
+              relevantbhvectors[3][1] = (CurrentGrid->CellLeftEdge[1][igrid[1] -1 + CurrentGrid->GridStartIndex[1]] + 0.5*CurrentGrid->CellWidth[1][0]) - (CurrentGrid->CellLeftEdge[1][igrid[1] + CurrentGrid->GridStartIndex[1]] + 0.5*CurrentGrid->CellWidth[1][0]) * BoxSize;
+              relevantbhvectors[3][0]= (CurrentGrid->CellLeftEdge[0][igrid[0]  + CurrentGrid->GridStartIndex[0]] + 0.5*CurrentGrid->CellWidth[0][0]) - (CurrentGrid->CellLeftEdge[0][igrid[0]  + CurrentGrid->GridStartIndex[0]] + 0.5*CurrentGrid->CellWidth[0][0]) * BoxSize;
+              relevantbhvectors[4][2] = (CurrentGrid->CellLeftEdge[2][igrid[2]  + CurrentGrid->GridStartIndex[2]] + 0.5*CurrentGrid->CellWidth[2][0]) - (CurrentGrid->CellLeftEdge[2][igrid[2]  + CurrentGrid->GridStartIndex[2]] + 0.5*CurrentGrid->CellWidth[2][0])  * BoxSize;
+              relevantbhvectors[4][1] = (CurrentGrid->CellLeftEdge[1][igrid[1]  + CurrentGrid->GridStartIndex[1]] + 0.5*CurrentGrid->CellWidth[1][0]) - (CurrentGrid->CellLeftEdge[1][igrid[1]  + CurrentGrid->GridStartIndex[1]] + 0.5*CurrentGrid->CellWidth[1][0]) * BoxSize;
+              relevantbhvectors[4][0]= (CurrentGrid->CellLeftEdge[0][igrid[0]  + 1 + CurrentGrid->GridStartIndex[0]] + 0.5*CurrentGrid->CellWidth[0][0]) - (CurrentGrid->CellLeftEdge[0][igrid[0] + CurrentGrid->GridStartIndex[0]] + 0.5*CurrentGrid->CellWidth[0][0]) * BoxSize;
+              relevantbhvectors[5][2] = (CurrentGrid->CellLeftEdge[2][igrid[2] + CurrentGrid->GridStartIndex[2]] + 0.5*CurrentGrid->CellWidth[2][0]) - (CurrentGrid->CellLeftEdge[2][igrid[2] + CurrentGrid->GridStartIndex[2]] + 0.5*CurrentGrid->CellWidth[2][0]) * BoxSize;
+              relevantbhvectors[5][1] = (CurrentGrid->CellLeftEdge[1][igrid[1]  + CurrentGrid->GridStartIndex[1]] + 0.5*CurrentGrid->CellWidth[1][0]) - (CurrentGrid->CellLeftEdge[1][igrid[1]  + CurrentGrid->GridStartIndex[1]] + 0.5*CurrentGrid->CellWidth[1][0]) * BoxSize;
+              relevantbhvectors[5][0]= (CurrentGrid->CellLeftEdge[0][igrid[0]  -1 + CurrentGrid->GridStartIndex[0]] + 0.5*CurrentGrid->CellWidth[0][0]) - (CurrentGrid->CellLeftEdge[0][igrid[0] + CurrentGrid->GridStartIndex[0]] + 0.5*CurrentGrid->CellWidth[0][0]) * BoxSize;
+             //fprintf(stdout,"found the bh vectors\n");
+                fprintf(stdout,"* * * *\n");
+             double totalaccretion = 0.0;
+              double cell_length  = CurrentGrid->CellWidth[0][0];
+              double cell_area = cell_length * cell_length;
+              double accretions[6];
+              double  momentum[6][3];
+             double towardsbh[6][3];
+             double totalmomentum[3];
+                         totalmomentum[0] = Mass * vel[0];
+                         totalmomentum[1] = Mass * vel[1];
+                         totalmomentum[2] = Mass * vel[2];
+             fprintf(stdout,"* * * * * \n");
+             for(int i=0; i<6; i++){
+                double numerator = (relevantvelocities[i][0] * relevantbhvectors[i][0]) + (relevantvelocities[i][1] * relevantbhvectors[i][1] ) + (relevantbhvectors[i][2] * relevantvelocities[i][2]);
+                double denominator  = (relevantbhvectors[i][0] * relevantbhvectors[i][0]) + (relevantbhvectors[i][1] * relevantbhvectors[i][1]) + (relevantbhvectors[i][2] * relevantbhvectors[i][2]);
+               //fprintf(stdout,"denominator: %g\",denominator);
+               double scalar = numerator/denominator;
+               //fprintf(stdout,"numerator, denominator, scalar = %g %g %g\n",numerator,denominator,scalar);
+               towardsbh[i][0] = relevantbhvectors[i][0] * scalar;
+               towardsbh[i][1] = relevantbhvectors[i][1] * scalar;
+               towardsbh[i][2] = relevantbhvectors[i][2] * scalar;
+                double magnitude = sqrt(pow((scalar * relevantbhvectors[i][2]),2) + pow((scalar * relevantbhvectors[i][1]),2) + pow((scalar * relevantbhvectors[i][0]),2));
+               if (scalar<0) magnitude *= -1; else {};
+               float gas_density = CurrentGrid->BaryonField[DensNum][i] * DensityConversion ; // in SolarMass
+               //fprintf(stdout,"just did some linear algebra stuff\n");
+               accretions[i] = magnitude * cell_area * gas_density;
+               totalmomentum[0] += accretions[i] * towardsbh[i][0]  * dt;
+               totalmomentum[1] += accretions[i] * towardsbh[i][1]  * dt;
+               totalmomentum[2] += accretions[i] * towardsbh[i][2]  * dt;
+               //fprintf(stdout,"gas density, gas velocity, cell area  = %g, %g %g\n",gas_density,magnitude,cell_area);
+               //fprintf(stdout,"before segfault\n");
+              // fprintf(stdout,"cell accretion rate: %g\n",accretions[i]);
+
+                }
+               fprintf(stdout,"* * * * * *\n");
+                for(int i =0; i<6; i++) {
+                    totalaccretion +=  accretions[i];
+               
+                    }
+             //totalaccretion = accretions[0] + accretions[1] +accretions[2] +accretions[3] +accretions[4] +accretions[5] ;
+              if (totalaccretion<0){
+                 fprintf(stdout,"no accretion\n");
+                mdot=0;
+              } else {
+                 //fprintf(stdout,"some accretion\n");
+                 fprintf(stdout,"%g\n",totalaccretion*yr_s);
+                  mdot = totalaccretion;
+                             vel[0] =  totalmomentum[0] / Mass;
+                             vel[1] =  totalmomentum[1] / Mass;
+                             vel[2] =  totalmomentum[2] / Mass;
+                 fprintf(stdout,"Flux Accretion: BH position: [%f, %f, %f] \n",pos[0],pos[1],pos[2]);
+                 fprintf(stdout,"Flux Accretion: BH velocity: [%f, %f, %f] \n",vel[0],vel[1],vel[2]);
+                 fprintf(stdout,"Flux Accretion: Accretion rate: %g Msun/yr \n", mdot);
+              }
+		mdot_UpperLim   it =  density * DensityUnits *
+		POW(CurrentGrid->CellWidth[0][0]*LengthUnits, 3.0) / SolarMass / (CurrentGrid->dtFixed) / TimeUnits;
+		mdot = min(mdot, mdot_UpperLimit);
+                fprintf(stdout,"* * * * * * *\n");
+             }
+            
     /* Calculate Eddington accretion rate in SolarMass/s; In general, when calculating 
        the Eddington limit the radiative efficiency shouldn't be smaller than 
        0.1 even when MBHFeedbackRadiativeEfficiency is set to be lower than 0.1 for 
@@ -532,7 +657,7 @@ int Star::CalculateMassAccretion(float &BondiRadius, float &density)
 	      temperature[index], v_rel);
       //    this->PrintInfo();  
     }
-    
+      fprintf(stdout,"* * * * * * * *\n");
   } // ENDIF LOCAL_ACCRETION with type == MBH
 
 
